@@ -92,6 +92,17 @@ $appInstanceId = if ($appInstance.PSObject.Properties.Name -contains 'ObjectId')
     throw "Unable to resolve the Teams application instance object id from the returned object."
 }
 
+# Provision the application instance into the Teams calling fabric. This is a
+# REQUIRED step for compliance recording: without a successful sync the policy
+# associations exist on paper, but Teams never actually invites the bot to calls
+# (symptom: no notifications ever reach the calling webhook). Safe to re-run.
+Write-Host "Syncing Teams application instance $appInstanceId into the calling fabric ..."
+try {
+    Sync-CsOnlineApplicationInstance -ObjectId $appInstanceId -ErrorAction Stop
+} catch {
+    Write-Warning "Sync-CsOnlineApplicationInstance failed (it may already be synced): $($_.Exception.Message)"
+}
+
 $existingAssociation = Get-CsTeamsComplianceRecordingApplication -Filter "$policyIdentity*" -ErrorAction SilentlyContinue | Where-Object {
     $_.Identity -eq "$policyIdentity/$appInstanceId"
 }
@@ -110,5 +121,23 @@ Grant-CsTeamsComplianceRecordingPolicy `
     -Identity   $PilotUserUpn `
     -PolicyName $PolicyName
 
-Write-Host "Done. Policy propagation can take a while. Place a test call as $PilotUserUpn."
+Write-Host ""
+Write-Host "==== Verification ===="
+Write-Host "App instance:"
+Get-CsOnlineApplicationInstance -Identity $appInstanceId |
+    Select-Object DisplayName, UserPrincipalName, ApplicationId, ObjectId |
+    Format-List
+Write-Host "Effective compliance recording policy on $PilotUserUpn :"
+Get-CsOnlineUser -Identity $PilotUserUpn |
+    Select-Object UserPrincipalName, TeamsComplianceRecordingPolicy |
+    Format-List
+
+Write-Host "==== Manual steps NOT covered by this script ===="
+Write-Host " 1. Azure Bot resource (same Client ID $BotAppId) -> Channels -> Microsoft Teams"
+Write-Host "    -> Calling tab: 'Enable calling' ON and 'Webhook (for calling)' = https://<public-host>/api/calling"
+Write-Host " 2. App registration -> API permissions: admin consent granted for"
+Write-Host "    Calls.JoinGroupCall.All, Calls.JoinGroupCallAsGuest.All, Calls.AccessMedia.All"
+Write-Host " 3. The public host above must be the CURRENT tunnel URL (free ngrok URLs rotate on restart)."
+Write-Host ""
+Write-Host "Done. Policy propagation can take 30-60+ minutes. Then place a test call as $PilotUserUpn."
 Write-Host "To remove later: Grant-CsTeamsComplianceRecordingPolicy -Identity $PilotUserUpn -PolicyName `$null; Remove-CsTeamsComplianceRecordingPolicy -Identity $PolicyName"

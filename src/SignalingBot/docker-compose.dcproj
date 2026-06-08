@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<Project ToolsVersion="15.0" Sdk="Microsoft.Docker.Sdk">
+	
+	<PropertyGroup Label="Globals">
+		<ProjectVersion>2.1</ProjectVersion>
+		<DockerTargetOS>Linux</DockerTargetOS>
+		<ProjectGuid>{fb7b5d41-529f-433a-8cb8-522108ca610b}</ProjectGuid>
+		<DockerLaunchAction>None</DockerLaunchAction>
+		<DockerServiceUrl>{Scheme}://localhost:{ServicePort}/healthz</DockerServiceUrl>
+		<DockerServiceName>signalingbot</DockerServiceName>
+	</PropertyGroup>
+	
+	<ItemGroup>
+		<None Include="docker-compose.override.yml">
+			<DependentUpon>docker-compose.yml</DependentUpon>
+		</None>
+		<None Include="docker-compose.yml" />
+		<None Include=".dockerignore" />
+	</ItemGroup>
+	
+	<Target Name="PreBuild" BeforeTargets="PreBuildEvent">
+		<Exec Command="echo Creating external docker network" />
+		<Exec Command="docker network create grapefruit" IgnoreExitCode="true" />
+	</Target>
+	
+</Project>

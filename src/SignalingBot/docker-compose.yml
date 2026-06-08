@@ -1,0 +1,17 @@
+networks:
+  default:
+    name: grapefruit
+    external: true
+
+services:
+  signalingbot:
+    labels:
+      - "com.microsoft.visual-studio.project-name=SignalingBot"    
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5068:5068"
+    environment:
+      - ASPNETCORE_HTTP_PORTS=5068
+      - ASPNETCORE_ENVIRONMENT=Development

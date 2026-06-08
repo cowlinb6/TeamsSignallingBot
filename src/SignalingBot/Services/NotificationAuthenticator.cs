@@ -8,9 +8,7 @@ using SignalingBot.Configuration;
 namespace SignalingBot.Services;
 
 /// <summary>
-/// Validates the Bearer token Graph attaches to each calling notification.
-/// Per Microsoft guidance the token is signed per the published OpenID config,
-/// issued by https://api.botframework.com, with <c>aud</c> = the bot App ID.
+/// Validates the Bearer token Microsoft attaches to each calling notification.
 /// </summary>
 public interface INotificationAuthenticator
 {
@@ -19,22 +17,41 @@ public interface INotificationAuthenticator
 
 public sealed class NotificationAuthenticator : INotificationAuthenticator
 {
-    // Published OpenID configuration used to verify calling-notification tokens.
-    private const string OpenIdConfigUrl = "https://api.aps.skype.com/v1/.well-known/OpenIdConfiguration";
-    private const string Issuer = "https://api.botframework.com";
+    // Incoming policy/compliance call notifications arrive via the Azure Bot
+    // calling webhook and are signed as Bot Connector tokens, whose keys live in
+    // the Bot Framework OpenID metadata (login.botframework.com). Some call-scoped
+    // / Graph-issued notifications are instead signed per the Skype metadata.
+    // We therefore validate against the UNION of both keysets and accept either
+    // issuer — validating against only one endpoint yields IDX10503 "kid not
+    // found" for the other token type, which silently 401s the recorder and makes
+    // Teams drop the call ("problem setting up the recording required by your org").
+    private static readonly string[] OpenIdConfigUrls =
+    {
+        "https://login.botframework.com/v1/.well-known/openidconfiguration",
+        "https://api.aps.skype.com/v1/.well-known/OpenIdConfiguration",
+    };
+
+    private static readonly string[] ValidIssuers =
+    {
+        "https://api.botframework.com",
+        "https://graph.microsoft.com",
+    };
 
     private readonly BotOptions _options;
     private readonly ILogger<NotificationAuthenticator> _logger;
-    private readonly ConfigurationManager<OpenIdConnectConfiguration> _configManager;
+    private readonly ConfigurationManager<OpenIdConnectConfiguration>[] _configManagers;
     private readonly JsonWebTokenHandler _handler = new();
 
     public NotificationAuthenticator(IOptions<BotOptions> options, ILogger<NotificationAuthenticator> logger)
     {
         _options = options.Value;
         _logger = logger;
-        _configManager = new ConfigurationManager<OpenIdConnectConfiguration>(
-            OpenIdConfigUrl,
-            new OpenIdConnectConfigurationRetriever());
+        _configManagers = OpenIdConfigUrls
+            .Select(url => new ConfigurationManager<OpenIdConnectConfiguration>(
+                url,
+                new OpenIdConnectConfigurationRetriever(),
+                new HttpDocumentRetriever()))
+            .ToArray();
     }
 
     public async Task<bool> ValidateAsync(string? authorizationHeader, CancellationToken ct = default)
@@ -54,31 +71,66 @@ public sealed class NotificationAuthenticator : INotificationAuthenticator
 
         var token = authorizationHeader["Bearer ".Length..].Trim();
 
-        try
-        {
-            var config = await _configManager.GetConfigurationAsync(ct);
-            var result = await _handler.ValidateTokenAsync(token, new TokenValidationParameters
-            {
-                ValidateIssuer = true,
-                ValidIssuer = Issuer,
-                ValidateAudience = true,
-                ValidAudience = _options.ClientId,
-                ValidateLifetime = true,
-                IssuerSigningKeys = config.SigningKeys,
-                ValidateIssuerSigningKey = true,
-            });
+        // First attempt uses cached metadata; on a signing-key miss, force a
+        // refresh and retry once to ride out key rotation.
+        return await TryValidateAsync(token, forceRefresh: false, ct)
+            || await TryValidateAsync(token, forceRefresh: true, ct);
+    }
 
-            if (!result.IsValid)
+    private async Task<bool> TryValidateAsync(string token, bool forceRefresh, CancellationToken ct)
+    {
+        var signingKeys = new List<SecurityKey>();
+        foreach (var manager in _configManagers)
+        {
+            try
             {
-                _logger.LogWarning(result.Exception, "Rejected notification: token validation failed.");
+                if (forceRefresh)
+                {
+                    manager.RequestRefresh();
+                }
+
+                var config = await manager.GetConfigurationAsync(ct);
+                signingKeys.AddRange(config.SigningKeys);
             }
-
-            return result.IsValid;
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not load OpenID signing keys from one endpoint (continuing).");
+            }
         }
-        catch (Exception ex)
+
+        if (signingKeys.Count == 0)
         {
-            _logger.LogWarning(ex, "Rejected notification: error validating token.");
+            _logger.LogWarning("Rejected notification: no signing keys available from any metadata endpoint.");
             return false;
         }
+
+        var result = await _handler.ValidateTokenAsync(token, new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuers = ValidIssuers,
+            ValidateAudience = true,
+            ValidAudience = _options.ClientId,
+            ValidateLifetime = true,
+            IssuerSigningKeys = signingKeys,
+            ValidateIssuerSigningKey = true,
+        });
+
+        if (result.IsValid)
+        {
+            return true;
+        }
+
+        // Stay quiet on the first (cached-key) miss; only warn once we've also
+        // tried refreshed keys, so a single rotation doesn't spam the log.
+        if (forceRefresh)
+        {
+            _logger.LogWarning(result.Exception, "Rejected notification: token validation failed.");
+        }
+        else
+        {
+            _logger.LogDebug(result.Exception, "Token failed on cached keys; refreshing and retrying.");
+        }
+
+        return false;
     }
 }

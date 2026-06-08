@@ -9,7 +9,7 @@ namespace SignalingBot.Services;
 /// <summary>Performs Graph call control actions (answer) via REST.</summary>
 public interface ICallService
 {
-    Task AnswerWithServiceHostedMediaAsync(string callId, CancellationToken ct = default);
+    Task AnswerWithServiceHostedMediaAsync(string callId, string? tenantId, CancellationToken ct = default);
 }
 
 public sealed class CallService : ICallService
@@ -38,9 +38,11 @@ public sealed class CallService : ICallService
     /// crux experiment: service-hosted media means Microsoft hosts the media and
     /// we only receive signaling — no Windows media stack required.
     /// </summary>
-    public async Task AnswerWithServiceHostedMediaAsync(string callId, CancellationToken ct = default)
+    public async Task AnswerWithServiceHostedMediaAsync(string callId, string? tenantId, CancellationToken ct = default)
     {
-        var token = await _tokenProvider.GetTokenAsync(ct);
+        // Answer with a token from the CALLING tenant; for a multi-tenant recorder
+        // a home-tenant token would be rejected for other tenants' calls.
+        var token = await _tokenProvider.GetTokenAsync(tenantId, ct);
 
         // https://learn.microsoft.com/graph/api/call-answer
         var body = new

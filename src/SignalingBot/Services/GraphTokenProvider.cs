@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Options;
@@ -5,13 +6,19 @@ using SignalingBot.Configuration;
 
 namespace SignalingBot.Services;
 
-/// <summary>Acquires and caches an app-only Graph token (client credentials).</summary>
+/// <summary>Acquires and caches app-only Graph tokens (client credentials), per tenant.</summary>
 public interface IGraphTokenProvider
 {
-    Task<string> GetTokenAsync(CancellationToken ct = default);
+    /// <summary>
+    /// Gets an app token for <paramref name="tenantId"/> (the tenant of the
+    /// incoming call). When null/empty, falls back to the configured home tenant.
+    /// A multi-tenant recorder must answer each call with a token from the calling
+    /// tenant, so tokens are cached per tenant.
+    /// </summary>
+    Task<string> GetTokenAsync(string? tenantId = null, CancellationToken ct = default);
 
-    /// <summary>Pre-fetch the token so the first call:answer isn't slowed by it
-    /// (the policy answer window is only ~5 seconds).</summary>
+    /// <summary>Pre-fetch the home-tenant token so the first call:answer isn't
+    /// slowed by it (the policy answer window is only ~5 seconds).</summary>
     Task WarmUpAsync(CancellationToken ct = default);
 }
 
@@ -22,10 +29,8 @@ public sealed class GraphTokenProvider : IGraphTokenProvider
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly BotOptions _options;
     private readonly ILogger<GraphTokenProvider> _logger;
-    private readonly SemaphoreSlim _gate = new(1, 1);
-
-    private string? _cachedToken;
-    private DateTimeOffset _expiresAt = DateTimeOffset.MinValue;
+    private readonly ConcurrentDictionary<string, TenantToken> _cache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public GraphTokenProvider(
         IHttpClientFactory httpClientFactory,
@@ -37,26 +42,53 @@ public sealed class GraphTokenProvider : IGraphTokenProvider
         _logger = logger;
     }
 
-    public Task WarmUpAsync(CancellationToken ct = default) => GetTokenAsync(ct);
-
-    public async Task<string> GetTokenAsync(CancellationToken ct = default)
+    public Task WarmUpAsync(CancellationToken ct = default)
     {
-        // Refresh a minute before expiry to stay clear of the answer deadline.
-        if (_cachedToken is not null && DateTimeOffset.UtcNow < _expiresAt.AddMinutes(-1))
+        // We can't know customer tenants ahead of time, so only warm the home
+        // tenant - and only when it's a concrete tenant (client-credentials can't
+        // target /common or /organizations).
+        var home = _options.TenantId;
+        if (string.IsNullOrWhiteSpace(home) ||
+            home.Equals("common", StringComparison.OrdinalIgnoreCase) ||
+            home.Equals("organizations", StringComparison.OrdinalIgnoreCase))
         {
-            return _cachedToken;
+            _logger.LogInformation("Skipping token warm-up: no concrete home tenant configured.");
+            return Task.CompletedTask;
         }
 
-        await _gate.WaitAsync(ct);
+        return GetTokenAsync(home, ct);
+    }
+
+    public async Task<string> GetTokenAsync(string? tenantId = null, CancellationToken ct = default)
+    {
+        var tenant = string.IsNullOrWhiteSpace(tenantId) ? _options.TenantId : tenantId;
+        if (string.IsNullOrWhiteSpace(tenant) ||
+            tenant.Equals("common", StringComparison.OrdinalIgnoreCase) ||
+            tenant.Equals("organizations", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "No concrete tenant id available for token acquisition. Provide the calling " +
+                "tenant id, or set Bot__TenantId to a specific tenant for fallback.");
+        }
+
+        var entry = _cache.GetOrAdd(tenant, _ => new TenantToken());
+
+        // Refresh a minute before expiry to stay clear of the answer deadline.
+        if (entry.IsFresh)
+        {
+            return entry.Token!;
+        }
+
+        await entry.Gate.WaitAsync(ct);
         try
         {
-            if (_cachedToken is not null && DateTimeOffset.UtcNow < _expiresAt.AddMinutes(-1))
+            if (entry.IsFresh)
             {
-                return _cachedToken;
+                return entry.Token!;
             }
 
             var client = _httpClientFactory.CreateClient();
-            var tokenEndpoint = $"https://login.microsoftonline.com/{_options.TenantId}/oauth2/v2.0/token";
+            var tokenEndpoint = $"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token";
 
             using var response = await client.PostAsync(
                 tokenEndpoint,
@@ -69,19 +101,36 @@ public sealed class GraphTokenProvider : IGraphTokenProvider
                 }),
                 ct);
 
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync(ct);
+                throw new InvalidOperationException(
+                    $"Token request for tenant {tenant} failed: {(int)response.StatusCode} {error}");
+            }
+
             var token = await response.Content.ReadFromJsonAsync<TokenResponse>(cancellationToken: ct)
                         ?? throw new InvalidOperationException("Empty token response from Entra.");
 
-            _cachedToken = token.AccessToken;
-            _expiresAt = DateTimeOffset.UtcNow.AddSeconds(token.ExpiresIn);
-            _logger.LogInformation("Acquired Graph app token; expires at {ExpiresAt:o}.", _expiresAt);
-            return _cachedToken!;
+            entry.Token = token.AccessToken;
+            entry.ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(token.ExpiresIn);
+            _logger.LogInformation("Acquired Graph app token for tenant {Tenant}; expires at {ExpiresAt:o}.",
+                tenant, entry.ExpiresAt);
+            return entry.Token!;
         }
         finally
         {
-            _gate.Release();
+            entry.Gate.Release();
         }
+    }
+
+    /// <summary>Per-tenant cached token with its own refresh gate.</summary>
+    private sealed class TenantToken
+    {
+        public readonly SemaphoreSlim Gate = new(1, 1);
+        public string? Token;
+        public DateTimeOffset ExpiresAt = DateTimeOffset.MinValue;
+
+        public bool IsFresh => Token is not null && DateTimeOffset.UtcNow < ExpiresAt.AddMinutes(-1);
     }
 
     private sealed record TokenResponse

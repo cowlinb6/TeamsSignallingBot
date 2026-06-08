@@ -43,7 +43,8 @@ app.MapPost("/api/calling", async (
 {
     var logger = loggerFactory.CreateLogger("CallingWebhook");
 
-    if (!await authenticator.ValidateAsync(request.Headers.Authorization, ct))
+    var validation = await authenticator.ValidateAsync(request.Headers.Authorization, ct);
+    if (!validation.IsValid)
     {
         return Results.Unauthorized();
     }
@@ -67,7 +68,7 @@ app.MapPost("/api/calling", async (
         return Results.Accepted();
     }
 
-    await processor.ProcessAsync(notifications, ct);
+    await processor.ProcessAsync(notifications, validation.TenantId, ct);
     return Results.Accepted();
 });
 

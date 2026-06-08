@@ -9,7 +9,9 @@ namespace SignalingBot.Services;
 /// </summary>
 public interface INotificationProcessor
 {
-    Task ProcessAsync(CommsNotifications notifications, CancellationToken ct = default);
+    /// <param name="tenantId">Calling tenant from the validated notification token,
+    /// used to answer with a token from the right tenant (multi-tenant support).</param>
+    Task ProcessAsync(CommsNotifications notifications, string? tenantId, CancellationToken ct = default);
 }
 
 public sealed class NotificationProcessor : INotificationProcessor
@@ -30,7 +32,7 @@ public sealed class NotificationProcessor : INotificationProcessor
         _logger = logger;
     }
 
-    public async Task ProcessAsync(CommsNotifications notifications, CancellationToken ct = default)
+    public async Task ProcessAsync(CommsNotifications notifications, string? tenantId, CancellationToken ct = default)
     {
         foreach (var notification in notifications.Value)
         {
@@ -42,7 +44,7 @@ public sealed class NotificationProcessor : INotificationProcessor
                 }
                 else
                 {
-                    await HandleCallNotificationAsync(notification, ct);
+                    await HandleCallNotificationAsync(notification, tenantId, ct);
                 }
             }
             catch (Exception ex)
@@ -53,7 +55,7 @@ public sealed class NotificationProcessor : INotificationProcessor
         }
     }
 
-    private async Task HandleCallNotificationAsync(CommsNotification notification, CancellationToken ct)
+    private async Task HandleCallNotificationAsync(CommsNotification notification, string? tenantId, CancellationToken ct)
     {
         var call = notification.ResourceData.Deserialize<Call>(JsonOptions);
         var callId = call?.Id ?? notification.CallId;
@@ -81,10 +83,11 @@ public sealed class NotificationProcessor : INotificationProcessor
             return; // no transition, nothing to report
         }
 
-        // Auto-answer the policy-routed incoming call within the ~5s window.
+        // Auto-answer the policy-routed incoming call within the ~5s window,
+        // using a token from the calling tenant.
         if (string.Equals(state, "incoming", StringComparison.OrdinalIgnoreCase))
         {
-            await _callService.AnswerWithServiceHostedMediaAsync(callId, ct);
+            await _callService.AnswerWithServiceHostedMediaAsync(callId, tenantId, ct);
         }
 
         EmitEvent(new CallEvent

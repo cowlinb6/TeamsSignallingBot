@@ -53,11 +53,21 @@ Set via environment variables (preferred) or `appsettings`:
 
 | Variable | Meaning |
 | --- | --- |
-| `Bot__TenantId` | Entra tenant ID |
+| `Bot__TenantId` | Home Entra tenant ID. Used to pre-warm the token and as a fallback only; per-call answering uses the **calling** tenant from the notification (see below). |
 | `Bot__ClientId` | App registration / Azure Bot Client ID |
 | `Bot__ClientSecret` | App registration client secret |
 | `Bot__PublicUrl` | Public base URL (your ngrok URL), e.g. `https://abc123.ngrok.app` |
 | `Bot__ValidateNotificationToken` | `true` (set `false` only for local plumbing tests) |
+
+### Multi-tenant
+
+When the Entra app is multi-tenant, one deployment serves every consented tenant.
+Inbound notifications are validated on audience + Bot Framework issuer (tenant-agnostic),
+and the bot acquires the **outbound** answer token from the *calling* tenant — read
+from the validated token's `tid` claim and cached per tenant. Each customer tenant must
+admin-consent the app and run `deploy/setup-compliance-policy.ps1` against the same
+`Bot__ClientId`. `Bot__TenantId` should be your home tenant GUID (for warm-up); set it to
+a concrete tenant, not `common`/`organizations` (client-credentials can't target those).
 
 ## Build & run
 

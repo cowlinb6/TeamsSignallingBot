@@ -14,17 +14,31 @@
 
 <#+
 .EXAMPLE
+    # Fail-open (default): calls still connect if the bot is down.
     .\setup-compliance-policy.ps1 -BotAppId e5dddf52-c008-4028-a350-ed8cd1792e83 -PilotUserUpn ben@dimensions.team
+
+.EXAMPLE
+    # Fail-closed: block calls when the recorder can't record.
+    .\setup-compliance-policy.ps1 -BotAppId e5dddf52-... -PilotUserUpn ben@dimensions.team -FailClosed
 #>
 
 param(
     [Parameter(Mandatory = $true)] [string] $BotAppId,      # = app registration / Azure Bot Client ID
     [Parameter(Mandatory = $true)] [string] $PilotUserUpn,  # e.g. tester@contoso.onmicrosoft.com
     [string] $ApplicationName = "Signaling PoC Recorder",
-    [string] $PolicyName      = "SignalingPoCPolicy"
+    [string] $PolicyName      = "SignalingPoCPolicy",
+
+    # By default the association is FAIL-OPEN: if the bot is unavailable, fails to
+    # join, or drops, the user's Teams call still proceeds (no "problem setting up
+    # the recording required by your org"). Pass -FailClosed to make the recorder
+    # mandatory and BLOCK calls when it can't record (stricter compliance posture).
+    [switch] $FailClosed
 )
 
 $ErrorActionPreference = "Stop"
+
+# $true  => recorder is required (fail-closed); $false => optional (fail-open).
+$required = [bool]$FailClosed
 
 Import-Module MicrosoftTeams
 Connect-MicrosoftTeams
@@ -107,13 +121,24 @@ $existingAssociation = Get-CsTeamsComplianceRecordingApplication -Filter "$polic
     $_.Identity -eq "$policyIdentity/$appInstanceId"
 }
 
+$mode = if ($required) { "fail-CLOSED (calls blocked when the bot can't record)" } else { "fail-OPEN (calls proceed when the bot is unavailable)" }
 if ($existingAssociation) {
-    Write-Host "Compliance recording association already exists for app instance $appInstanceId and policy $policyIdentity."
+    Write-Host "Compliance recording association already exists; updating it to $mode ..."
+    Set-CsTeamsComplianceRecordingApplication `
+        -Identity "$policyIdentity/$appInstanceId" `
+        -RequiredBeforeCallEstablishment $required `
+        -RequiredDuringCall              $required `
+        -RequiredBeforeMeetingJoin       $required `
+        -RequiredDuringMeeting           $required
 } else {
-    Write-Host "Registering compliance recording application for app instance $appInstanceId ..."
+    Write-Host "Registering compliance recording application for app instance $appInstanceId ($mode) ..."
     New-CsTeamsComplianceRecordingApplication `
         -Parent $policyIdentity `
-        -Id $appInstanceId
+        -Id $appInstanceId `
+        -RequiredBeforeCallEstablishment $required `
+        -RequiredDuringCall              $required `
+        -RequiredBeforeMeetingJoin       $required `
+        -RequiredDuringMeeting           $required
 }
 
 Write-Host "Assigning policy to pilot user $PilotUserUpn ..."
@@ -130,6 +155,10 @@ Get-CsOnlineApplicationInstance -Identity $appInstanceId |
 Write-Host "Effective compliance recording policy on $PilotUserUpn :"
 Get-CsOnlineUser -Identity $PilotUserUpn |
     Select-Object UserPrincipalName, TeamsComplianceRecordingPolicy |
+    Format-List
+Write-Host "Recording-required flags (all False = fail-open):"
+Get-CsTeamsComplianceRecordingApplication -Identity "$policyIdentity/$appInstanceId" |
+    Select-Object Id, RequiredBeforeCallEstablishment, RequiredDuringCall, RequiredBeforeMeetingJoin, RequiredDuringMeeting |
     Format-List
 
 Write-Host "==== Manual steps NOT covered by this script ===="

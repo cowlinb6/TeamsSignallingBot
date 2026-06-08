@@ -19,7 +19,8 @@ org catalog**, or **submit to the Teams Store** via Partner Center.
 | `color.png` | 192×192 colour icon (placeholder) |
 | `outline.png` | 32×32 transparent outline icon (placeholder) |
 | `generate-icons.py` | Regenerates the two placeholder icons (stdlib only) |
-| `package.sh` | Zips the three files into `appPackage.zip` |
+| `package.sh` | Zips the three files into `appPackage.zip` (bash/macOS/Linux) |
+| `package.ps1` | Same, for Windows PowerShell |
 
 ## 1. Fill in the manifest
 
@@ -41,6 +42,14 @@ Edit `manifest.json` and replace the placeholders:
 cd teams-app
 python3 generate-icons.py   # only if you don't have real icons yet
 ./package.sh                # -> appPackage.zip (files at the zip root)
+```
+
+On Windows:
+
+```powershell
+cd teams-app
+python generate-icons.py    # only if you don't have real icons yet
+.\package.ps1               # -> appPackage.zip (files at the zip root)
 ```
 
 Replace `color.png` / `outline.png` with real branding before any Store

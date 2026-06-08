@@ -1,0 +1,13 @@
+# Build output
+bin/
+obj/
+
+# User / local
+*.user
+appsettings.Development.json
+appsettings.local.json
+
+# IDE
+.vs/
+.idea/
+/src/SignalingBot/appsettings.json

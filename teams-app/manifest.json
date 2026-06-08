@@ -1,0 +1,47 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.19",
+  "version": "1.0.0",
+  "id": "REPLACE_WITH_TEAMS_APP_GUID",
+  "developer": {
+    "name": "Dimensions Technologies",
+    "websiteUrl": "https://speech.cowling.dev",
+    "privacyUrl": "https://speech.cowling.dev/privacy",
+    "termsOfUseUrl": "https://speech.cowling.dev/terms"
+  },
+  "name": {
+    "short": "Signaling Recorder",
+    "full": "Teams Call Signaling Recorder"
+  },
+  "description": {
+    "short": "Near real-time Teams call signaling via compliance recording.",
+    "full": "A compliance-recording bot that captures near real-time call signaling events (offered, established, held, retrieved, transferred, terminated) for in-scope users. The recorder is invoked automatically by a Teams compliance recording policy; this listing carries the bot's identity for tenant deployment and admin discoverability."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#4F52B2",
+  "bots": [
+    {
+      "botId": "e5dddf52-c008-4028-a350-ed8cd1792e83",
+      "scopes": [
+        "personal",
+        "team",
+        "groupchat"
+      ],
+      "isNotificationOnly": true,
+      "supportsFiles": false
+    }
+  ],
+  "permissions": [
+    "identity"
+  ],
+  "validDomains": [
+    "speech.cowling.dev"
+  ],
+  "webApplicationInfo": {
+    "id": "e5dddf52-c008-4028-a350-ed8cd1792e83",
+    "resource": "api://speech.cowling.dev/e5dddf52-c008-4028-a350-ed8cd1792e83"
+  }
+}

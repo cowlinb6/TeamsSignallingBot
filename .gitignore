@@ -11,3 +11,6 @@ appsettings.local.json
 .vs/
 .idea/
 /src/SignalingBot/appsettings.json
+
+# Teams app build artifact
+teams-app/appPackage.zip

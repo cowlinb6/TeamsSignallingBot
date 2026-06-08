@@ -28,7 +28,7 @@ Edit `manifest.json` and replace the placeholders:
 
 | Field | Set to |
 | --- | --- |
-| `id` | A **new GUID** for the Teams app (generate one; keep it distinct from the bot id). In the Developer Portal this is created for you. |
+| `id` | A **new GUID** for the Teams app, distinct from the bot id. The manifest ships with a generated placeholder GUID so it imports cleanly; replace it with the GUID the Developer Portal assigns. |
 | `bots[0].botId` | Your Azure Bot / Entra **Client ID** (currently `e5dddf52-…`). |
 | `developer.*` URLs | Real website / privacy / terms URLs (required for Store submission). |
 | `validDomains` | Public host(s) the app uses, e.g. `speech.cowling.dev`. |
